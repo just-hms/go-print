@@ -1,4 +1,3 @@
-// Package main ...
 package main
 
 import (
@@ -51,9 +50,9 @@ func mdToHtml(md []byte, absolutepath string) []byte {
 	}
 
 	renderer := html.NewRenderer(opts)
-	fmt.Println(renderer.Opts.AbsolutePrefix)
 
 	res := markdown.Render(doc, renderer)
+
 	return []byte(strings.Replace(defaults.Template, "{{}}", string(res), 1))
 }
 
@@ -75,7 +74,6 @@ func htmlToPdf(input []byte) (io.ReadCloser, error) {
 }
 
 func main() {
-
 	// Define a string flag named "input" with a default value and usage message
 	input := flag.String("input", "", "Usage: specify an input file")
 	output := flag.String("output", "", "Usage: specify an output file, default is the input.pdf")
@@ -110,7 +108,7 @@ func main() {
 	page := mdToHtml(content, "file://"+dir+"/")
 
 	// log
-	log, _ := os.Create("page.html")
+	log, _ := os.Create("data/page.html")
 	log.WriteString(string(page))
 
 	res, err := htmlToPdf(page)
