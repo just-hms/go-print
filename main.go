@@ -78,37 +78,93 @@ func htmlToPdf(input []byte, url string) (io.ReadCloser, error) {
 	return page.PDF(&proto.PagePrintToPDF{})
 
 }
+func concatFiles(dir string) ([]byte, error) {
+	var result []byte
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
+			}
+			result = append(result, content...)
+			result = append(result, '\n')
+			result = append(result, []byte("---")...)
+			result = append(result, '\n')
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
 
 func main() {
 	// Define a string flag named "input" with a default value and usage message
-	input := flag.String("input", "", "Usage: specify an input file")
+	input := flag.String("input", "", "Usage: specify an input file or a folder")
 	output := flag.String("output", "", "Usage: specify an output file, default is the input.pdf")
 
 	flag.Parse()
 
+	// handle flags
 	if *input == "" {
 		fmt.Println(errorStyle.Render("Error: must pass a .md file"))
 		return
 	}
 
-	if *output == "" {
-		i := *input
-		ext := filepath.Ext(*input)
-		if ext != "" {
-			*output = i[:len(i)-len(ext)]
-		}
-		*output += ".pdf"
-	}
-
-	dir, err := filepath.Abs(filepath.Dir(*input))
+	// check if file exists
+	fileInfo, err := os.Stat(*input)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
 
-	content, err := os.ReadFile(*input)
-	if err != nil {
-		panic(err)
+	if *output == "" {
+		if fileInfo.IsDir() {
+			*output = *input + ".pdf"
+		} else {
+			i := *input
+			ext := filepath.Ext(*input)
+			if ext != "" {
+				*output = i[:len(i)-len(ext)]
+			}
+			*output += ".pdf"
+		}
+	}
+
+	var (
+		content []byte
+		dir     string
+	)
+
+	if fileInfo.IsDir() {
+		dir, err = filepath.Abs(*input)
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		content, err = concatFiles(dir)
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+	} else {
+		dir, err = filepath.Abs(filepath.Dir(*input))
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		content, err = os.ReadFile(*input)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	page := mdToHtml(content)
