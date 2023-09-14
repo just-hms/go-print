@@ -4,14 +4,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"kek/defaults"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/just-hms/goprint/internal/defaults"
+
 	"github.com/alecthomas/chroma/quick"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 
@@ -22,7 +22,7 @@ import (
 	"github.com/gomarkdown/markdown/parser"
 )
 
-var errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+// var errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 
 func codeHook(w io.Writer, node ast.Node, entering bool) (ast.WalkStatus, bool) {
 
@@ -115,7 +115,7 @@ func main() {
 
 	// handle flags
 	if *input == "" {
-		fmt.Println(errorStyle.Render("Error: must pass a .md file"))
+		fmt.Println("Error: must pass a .md file")
 		return
 	}
 
@@ -126,17 +126,19 @@ func main() {
 		return
 	}
 
+	// TODO: make this better
 	if *output == "" {
-		if fileInfo.IsDir() {
-			*output = *input + ".pdf"
-		} else {
-			i := *input
-			ext := filepath.Ext(*input)
-			if ext != "" {
-				*output = i[:len(i)-len(ext)]
-			}
-			*output += ".pdf"
-		}
+		// if fileInfo.IsDir() {
+		// 	*output = *input + ".pdf"
+		// } else {
+		// 	i := *input
+		// 	ext := filepath.Ext(*input)
+		// 	if ext != "" {
+		// 		*output = i[:len(i)-len(ext)]
+		// 	}
+		// 	*output += ".pdf"
+		// }
+		*output = "data/kek.pdf"
 	}
 
 	var (
@@ -169,13 +171,10 @@ func main() {
 
 	page := mdToHtml(content)
 
-	// log
-	log, _ := os.Create("data/page.html")
-	log.WriteString(string(page))
-
 	res, err := htmlToPdf(page, "file://"+dir+"/")
 	if err != nil {
-		panic(err)
+		fmt.Println("Error:", err)
+		return
 	}
 
 	file, err := os.Create(*output)
