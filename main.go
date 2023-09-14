@@ -34,7 +34,7 @@ func codeHook(w io.Writer, node ast.Node, entering bool) (ast.WalkStatus, bool) 
 	return ast.GoToNext, false
 }
 
-func mdToHtml(md []byte, absolutepath string) []byte {
+func mdToHtml(md []byte) []byte {
 	// create markdown parser with extensions
 	extensions := parser.CommonExtensions | parser.AutoHeadingIDs | parser.NoEmptyLineBeforeBlock | parser.Mmark
 	p := parser.NewWithExtensions(extensions)
@@ -46,18 +46,24 @@ func mdToHtml(md []byte, absolutepath string) []byte {
 	opts := html.RendererOptions{
 		Flags:          htmlFlags,
 		RenderNodeHook: codeHook,
-		AbsolutePrefix: absolutepath,
 	}
 
 	renderer := html.NewRenderer(opts)
 
-	res := markdown.Render(doc, renderer)
+	renderedHTML := markdown.Render(doc, renderer)
 
-	return []byte(strings.Replace(defaults.Template, "{{}}", string(res), 1))
+	// replace template placeholder
+	return []byte(
+		strings.Replace(defaults.Template, "{{}}", string(renderedHTML), 1),
+	)
 }
 
-func htmlToPdf(input []byte) (io.ReadCloser, error) {
-	page := rod.New().MustConnect().MustPage("about:blank")
+func htmlToPdf(input []byte, url string) (io.ReadCloser, error) {
+	if url == "" {
+		url = "about:blank"
+	}
+
+	page := rod.New().MustConnect().MustPage(url)
 
 	if err := page.SetDocumentContent(string(input)); err != nil {
 		return nil, err
@@ -105,13 +111,13 @@ func main() {
 		panic(err)
 	}
 
-	page := mdToHtml(content, "file://"+dir+"/")
+	page := mdToHtml(content)
 
 	// log
 	log, _ := os.Create("data/page.html")
 	log.WriteString(string(page))
 
-	res, err := htmlToPdf(page)
+	res, err := htmlToPdf(page, "file://"+dir+"/")
 	if err != nil {
 		panic(err)
 	}
