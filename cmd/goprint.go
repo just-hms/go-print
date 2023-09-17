@@ -87,6 +87,92 @@ func mdToPdf(dir string, content []byte) (io.ReadCloser, error) {
 	return htmlToPdf(page, "file://"+dir+"/")
 }
 
+func handledir(dir string) ([]string, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		panic(err)
+	}
+
+	files := []string{}
+	err = filepath.Walk(dir, func(path string, info os.FileInfo, _ error) error {
+		if info.IsDir() {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	wg := errgroup.Group{}
+	mu := sync.Mutex{}
+
+	results := []string{}
+	for i, path := range files {
+		path := path
+		i := i
+		wg.Go(func() error {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			res, err := mdToPdf(dir, content)
+			if err != nil {
+				return err
+			}
+
+			// put the res into a temp file and store its name
+			tempFile, err := os.CreateTemp("", fmt.Sprintf("%d_temp_pdf_", i))
+			if err != nil {
+				return nil
+			}
+			_, err = io.Copy(tempFile, res)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			results = append(results, tempFile.Name())
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := wg.Wait(); err != nil {
+		return nil, err
+	}
+	return results, err
+}
+
+func handleFile(file string) ([]string, error) {
+	dir, err := filepath.Abs(filepath.Dir(file))
+	if err != nil {
+		return nil, err
+	}
+
+	content, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := mdToPdf(dir, content)
+	if err != nil {
+		return nil, err
+	}
+
+	// put the res into a temp file and store its name
+
+	tempFile, err := os.CreateTemp("", "temp_pdf_")
+	if err != nil {
+		return nil, err
+	}
+	_, err = io.Copy(tempFile, res)
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		tempFile.Name(),
+	}, nil
+}
 func main() {
 	// Define a string flag named "input" with a default value and usage message
 	input := flag.String("input", "", "Usage: specify an input file or a folder")
@@ -112,94 +198,16 @@ func main() {
 		*output = "data/kek.pdf"
 	}
 
-	var (
-		results []string
-		dir     string
-	)
+	var results []string
 
-	// TODO: cretae a pdf merda here
 	if fileInfo.IsDir() {
-		dir, err = filepath.Abs(*input)
-		if err != nil {
-			panic(err)
-		}
-
-		files := []string{}
-
-		err := filepath.Walk(dir, func(path string, info os.FileInfo, _ error) error {
-			if info.IsDir() {
-				return nil
-			}
-			files = append(files, path)
-			return nil
-		})
-		if err != nil {
-			panic(err)
-		}
-
-		wg := errgroup.Group{}
-		mu := sync.Mutex{}
-
-		for i, path := range files {
-			path := path
-			i := i
-			wg.Go(func() error {
-				content, err := os.ReadFile(path)
-				if err != nil {
-					panic(err)
-				}
-				res, err := mdToPdf(dir, content)
-				if err != nil {
-					return err
-				}
-
-				// put the res into a temp file and store its name
-				tempFile, err := os.CreateTemp("", fmt.Sprintf("%d_temp_pdf_", i))
-				if err != nil {
-					return nil
-				}
-				_, err = io.Copy(tempFile, res)
-				if err != nil {
-					return err
-				}
-				mu.Lock()
-				results = append(results, tempFile.Name())
-				mu.Unlock()
-				return nil
-			})
-		}
-		if err := wg.Wait(); err != nil {
-			panic(err)
-
-		}
-
+		results, err = handledir(*input)
 	} else {
-		dir, err := filepath.Abs(filepath.Dir(*input))
-		if err != nil {
-			panic(err)
-		}
+		results, err = handleFile(*input)
+	}
 
-		content, err := os.ReadFile(*input)
-		if err != nil {
-			panic(err)
-		}
-
-		res, err := mdToPdf(dir, content)
-		if err != nil {
-			panic(err)
-		}
-
-		// put the res into a temp file and store its name
-
-		tempFile, err := os.CreateTemp("", "temp_pdf_")
-		if err != nil {
-			panic(err)
-		}
-		_, err = io.Copy(tempFile, res)
-		if err != nil {
-			panic(err)
-		}
-		results = append(results, tempFile.Name())
+	if err != nil {
+		panic(err)
 	}
 
 	config := model.NewDefaultConfiguration()
