@@ -7,9 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/just-hms/goprint/internal/defaults"
+	"github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/alecthomas/chroma/quick"
 	"github.com/go-rod/rod"
@@ -41,7 +45,8 @@ func mdToHtml(md []byte) []byte {
 	doc := p.Parse(md)
 
 	// create HTML renderer with extensions
-	htmlFlags := html.CommonFlags | html.HrefTargetBlank | html.TOC
+	// MAYBE: add this back html.TOC
+	htmlFlags := html.CommonFlags | html.HrefTargetBlank
 
 	opts := html.RendererOptions{
 		Flags:          htmlFlags,
@@ -49,7 +54,6 @@ func mdToHtml(md []byte) []byte {
 	}
 
 	renderer := html.NewRenderer(opts)
-
 	renderedHTML := markdown.Render(doc, renderer)
 
 	// replace template placeholder
@@ -76,34 +80,11 @@ func htmlToPdf(input []byte, url string) (io.ReadCloser, error) {
 	time.Sleep(2 * time.Second)
 
 	return page.PDF(&proto.PagePrintToPDF{})
-
 }
-func concatFiles(dir string) ([]byte, error) {
-	var result []byte
 
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-
-			content, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return readErr
-			}
-			result = append(result, content...)
-			result = append(result, '\n')
-			result = append(result, []byte("---")...)
-			result = append(result, '\n')
-		}
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
+func mdToPdf(dir string, content []byte) (io.ReadCloser, error) {
+	page := mdToHtml(content)
+	return htmlToPdf(page, "file://"+dir+"/")
 }
 
 func main() {
@@ -115,7 +96,7 @@ func main() {
 
 	// handle flags
 	if *input == "" {
-		fmt.Println("Error: must pass a .md file")
+		fmt.Println("Error: must pass a .md file or a folder")
 		return
 	}
 
@@ -128,64 +109,111 @@ func main() {
 
 	// TODO: make this better
 	if *output == "" {
-		// if fileInfo.IsDir() {
-		// 	*output = *input + ".pdf"
-		// } else {
-		// 	i := *input
-		// 	ext := filepath.Ext(*input)
-		// 	if ext != "" {
-		// 		*output = i[:len(i)-len(ext)]
-		// 	}
-		// 	*output += ".pdf"
-		// }
 		*output = "data/kek.pdf"
 	}
 
 	var (
-		content []byte
+		results []string
 		dir     string
 	)
 
+	// TODO: cretae a pdf merda here
 	if fileInfo.IsDir() {
 		dir, err = filepath.Abs(*input)
 		if err != nil {
-			fmt.Println("Error:", err)
-			return
+			panic(err)
 		}
-		content, err = concatFiles(dir)
-		if err != nil {
-			fmt.Println("Error:", err)
-			return
-		}
-	} else {
-		dir, err = filepath.Abs(filepath.Dir(*input))
-		if err != nil {
-			fmt.Println("Error:", err)
-			return
-		}
-		content, err = os.ReadFile(*input)
+
+		files := []string{}
+
+		err := filepath.Walk(dir, func(path string, info os.FileInfo, _ error) error {
+			if info.IsDir() {
+				return nil
+			}
+			files = append(files, path)
+			return nil
+		})
 		if err != nil {
 			panic(err)
 		}
+
+		wg := errgroup.Group{}
+		mu := sync.Mutex{}
+
+		for i, path := range files {
+			path := path
+			i := i
+			wg.Go(func() error {
+				content, err := os.ReadFile(path)
+				if err != nil {
+					panic(err)
+				}
+				res, err := mdToPdf(dir, content)
+				if err != nil {
+					return err
+				}
+
+				// put the res into a temp file and store its name
+				tempFile, err := os.CreateTemp("", fmt.Sprintf("%d_temp_pdf_", i))
+				if err != nil {
+					return nil
+				}
+				_, err = io.Copy(tempFile, res)
+				if err != nil {
+					return err
+				}
+				mu.Lock()
+				results = append(results, tempFile.Name())
+				mu.Unlock()
+				return nil
+			})
+		}
+		if err := wg.Wait(); err != nil {
+			panic(err)
+
+		}
+
+	} else {
+		dir, err := filepath.Abs(filepath.Dir(*input))
+		if err != nil {
+			panic(err)
+		}
+
+		content, err := os.ReadFile(*input)
+		if err != nil {
+			panic(err)
+		}
+
+		res, err := mdToPdf(dir, content)
+		if err != nil {
+			panic(err)
+		}
+
+		// put the res into a temp file and store its name
+
+		tempFile, err := os.CreateTemp("", "temp_pdf_")
+		if err != nil {
+			panic(err)
+		}
+		_, err = io.Copy(tempFile, res)
+		if err != nil {
+			panic(err)
+		}
+		results = append(results, tempFile.Name())
 	}
 
-	page := mdToHtml(content)
+	config := model.NewDefaultConfiguration()
 
-	res, err := htmlToPdf(page, "file://"+dir+"/")
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
+	// Merge the temporary PDF files.
+	if err := api.MergeCreateFile(results, *output, config); err != nil {
+		fmt.Printf("Error merging PDFs: %v\n", err)
+		os.Exit(1)
 	}
 
-	file, err := os.Create(*output)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	defer file.Close()
-
-	_, err = io.Copy(file, res)
-	if err != nil {
-		fmt.Println("Error:", err)
+	for _, tempFile := range results {
+		err := os.Remove(tempFile)
+		if err != nil {
+			fmt.Printf("Error deleting temporary file %s: %v\n", tempFile, err)
+		}
 	}
 }
